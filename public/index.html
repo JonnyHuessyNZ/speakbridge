@@ -25,12 +25,7 @@
       <p class="text-white/80">Your AI Translation Companion</p>
     </header>
 
-    <!-- API Key Entry -->
-    <div id="apiModal" class="glass p-6 rounded-xl max-w-md mx-auto mb-6">
-      <h2 class="text-xl font-semibold mb-2">Enter your Gemini API key</h2>
-      <input id="apiKeyInput" class="w-full p-2 rounded bg-white/20 placeholder-white text-white mb-4" placeholder="API Key" type="password" />
-      <button id="saveApiKey" class="w-full bg-white text-indigo-600 font-semibold py-2 rounded">Save</button>
-    </div>
+    
 
     <!-- Status Bar -->
     <div id="statusBar" class="glass p-2 rounded-full text-center text-sm font-medium mb-4 hidden">Ready to translate</div>
@@ -57,25 +52,20 @@
     <div class="fixed bottom-6 right-6 flex space-x-4">
       <button id="micBtn" class="w-16 h-16 rounded-full bg-white text-indigo-600 flex items-center justify-center shadow-lg text-2xl">🎤</button>
       <button id="stopBtn" class="w-16 h-16 rounded-full bg-red-500 text-white flex items-center justify-center shadow-lg text-2xl hidden">🛑</button>
-      <button id="resetApiKeyBtn" class="w-16 h-16 rounded-full bg-gray-500 text-white flex items-center justify-center shadow-lg text-2xl">🔑</button>
     </div>
   </div>
 
   <script>
-    const apiKeyInput = document.getElementById('apiKeyInput');
-    const saveApiKey = document.getElementById('saveApiKey');
     const micBtn = document.getElementById('micBtn');
     const englishText = document.getElementById('englishText');
     const germanText = document.getElementById('germanText');
     const statusBar = document.getElementById('statusBar');
     const speakBtn = document.getElementById('speakBtn');
     const translationArea = document.getElementById('translationArea');
-    const apiModal = document.getElementById('apiModal');
     const listeningIndicator = document.getElementById('listeningIndicator');
-    const resetApiKeyBtn = document.getElementById('resetApiKeyBtn');
     const stopBtn = document.getElementById('stopBtn');
 
-    let apiKey = localStorage.getItem('geminiApiKey') || '';
+    let apiKey = process.env.NEXT_PUBLIC_GEMINI_API_KEY || localStorage.getItem('geminiApiKey') || '';
     let recognition;
     let accumulatedEnglishText = '';
     let translatedEnglishText = '';
@@ -97,7 +87,7 @@
 
       const newText = accumulatedEnglishText.substring(translatedEnglishText.length);
 
-      fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-pro-latest:generateContent?key=${apiKey}`, {
+      fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-lite:generateContent?key=${apiKey}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -168,43 +158,8 @@
     }
 
     micBtn.onclick = () => {
-      if (!apiKey) {
-        apiModal.classList.remove('hidden');
-        return;
-      }
       startListening();
     };
-
-    saveApiKey.onclick = () => {
-      const key = apiKeyInput.value.trim();
-      if (key) {
-        apiKey = key;
-        localStorage.setItem('geminiApiKey', key);
-        apiModal.classList.add('hidden');
-        translationArea.classList.remove('hidden');
-        setStatus('Ready to translate');
-      }
-    };
-
-    speakBtn.onclick = speakGerman;
-
-    stopBtn.onclick = () => {
-      recognition.stop();
-    };
-
-    resetApiKeyBtn.onclick = () => {
-      localStorage.removeItem('geminiApiKey');
-      apiKey = '';
-      apiModal.classList.remove('hidden');
-      translationArea.classList.add('hidden');
-      setStatus('API key cleared. Please enter a new key.');
-    };
-
-    if (apiKey) {
-      apiModal.classList.add('hidden');
-      translationArea.classList.remove('hidden');
-      setStatus('Ready to translate');
-    }
   </script>
 </body>
 </html>
