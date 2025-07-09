@@ -6,6 +6,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>SpeakBridge</title>
   <script src="https://cdn.tailwindcss.com"></script>
+  <script src="/config.js"></script>
   <style>
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap');
     * { font-family: 'Inter', sans-serif; }
@@ -65,12 +66,17 @@
     const listeningIndicator = document.getElementById('listeningIndicator');
     const stopBtn = document.getElementById('stopBtn');
 
-    let apiKey = process.env.NEXT_PUBLIC_GEMINI_API_KEY || localStorage.getItem('geminiApiKey') || '';
+    // let apiKey = process.env.NEXT_PUBLIC_GEMINI_API_KEY || localStorage.getItem('geminiApiKey') || '';
+    let apiKey = window.GEMINI_API_KEY;
     let recognition;
     let accumulatedEnglishText = '';
     let translatedEnglishText = '';
     let isDirty = false;
     let translateInterval;
+
+    if (!apiKey) {
+        alert("API Key is not set. Please contact Jonathan.");
+    }
 
     function setStatus(msg) {
       statusBar.textContent = msg;
