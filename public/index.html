@@ -54,8 +54,10 @@
     </div>
 
     <!-- Mic Button -->
-    <div class="fixed bottom-6 right-6">
+    <div class="fixed bottom-6 right-6 flex space-x-4">
       <button id="micBtn" class="w-16 h-16 rounded-full bg-white text-indigo-600 flex items-center justify-center shadow-lg text-2xl">🎤</button>
+      <button id="stopBtn" class="w-16 h-16 rounded-full bg-red-500 text-white flex items-center justify-center shadow-lg text-2xl hidden">🛑</button>
+      <button id="resetApiKeyBtn" class="w-16 h-16 rounded-full bg-gray-500 text-white flex items-center justify-center shadow-lg text-2xl">🔑</button>
     </div>
   </div>
 
@@ -70,30 +72,55 @@
     const translationArea = document.getElementById('translationArea');
     const apiModal = document.getElementById('apiModal');
     const listeningIndicator = document.getElementById('listeningIndicator');
+    const resetApiKeyBtn = document.getElementById('resetApiKeyBtn');
+    const stopBtn = document.getElementById('stopBtn');
 
     let apiKey = localStorage.getItem('geminiApiKey') || '';
     let recognition;
+    let accumulatedEnglishText = '';
+    let translatedEnglishText = '';
+    let isDirty = false;
+    let translateInterval;
 
     function setStatus(msg) {
       statusBar.textContent = msg;
       statusBar.classList.remove('hidden');
     }
 
-    function translateAndSpeak(text) {
+    
+
+    function translateAndDisplay() {
+      if (!isDirty) return;
+
       setStatus('Translating...');
-      fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key=${apiKey}`, {
+      isDirty = false;
+
+      const newText = accumulatedEnglishText.substring(translatedEnglishText.length);
+
+      fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-pro-latest:generateContent?key=${apiKey}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          contents: [{ parts: [{ text: `Translate to German only: ${text}` }] }]
+          contents: [{ parts: [{ text: `Translate the following English text to German. Only provide the German translation and nothing else. Keep the translation in sync with the english source text provided, even if it's a partial sentence. Do not add any extra text or explanations. ENGLISH SOURCE TEXT: ${newText}` }] }]
         })
       })
       .then(res => res.json())
       .then(data => {
+        if (data.error) {
+          console.error('Gemini API Error:', data.error);
+          setStatus(`Error: ${data.error.message}`);
+          return;
+        }
         const german = data.candidates[0]?.content?.parts[0]?.text || 'Error';
-        germanText.textContent = german;
+        germanText.textContent += german + ' ';
+        translatedEnglishText = accumulatedEnglishText;
+        speakGerman();
         speakBtn.classList.remove('hidden');
         setStatus('Translation ready');
+      })
+      .catch(error => {
+        console.error('Fetch Error:', error);
+        setStatus('Error: Could not connect to the translation service.');
       });
     }
 
@@ -106,25 +133,35 @@
     function startListening() {
       const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
       recognition = new SpeechRecognition();
-      recognition.continuous = false;
+      recognition.continuous = true;
       recognition.lang = 'en-US';
       recognition.interimResults = false;
 
       recognition.onstart = () => {
+        accumulatedEnglishText = '';
+        translatedEnglishText = '';
+        germanText.textContent = '';
         listeningIndicator.classList.remove('hidden');
+        micBtn.classList.add('hidden');
+        stopBtn.classList.remove('hidden');
         setStatus('Listening...');
+        translateInterval = setInterval(translateAndDisplay, 3000);
       };
 
       recognition.onresult = (event) => {
         const transcript = event.results[0][0].transcript;
-        englishText.textContent = transcript;
-        translateAndSpeak(transcript);
+        accumulatedEnglishText += transcript + ' ';
+        englishText.textContent = accumulatedEnglishText;
+        isDirty = true;
       };
 
       recognition.onerror = (e) => setStatus('Error: ' + e.error);
 
       recognition.onend = () => {
         listeningIndicator.classList.add('hidden');
+        micBtn.classList.remove('hidden');
+        stopBtn.classList.add('hidden');
+        clearInterval(translateInterval);
       };
 
       recognition.start();
@@ -150,6 +187,18 @@
     };
 
     speakBtn.onclick = speakGerman;
+
+    stopBtn.onclick = () => {
+      recognition.stop();
+    };
+
+    resetApiKeyBtn.onclick = () => {
+      localStorage.removeItem('geminiApiKey');
+      apiKey = '';
+      apiModal.classList.remove('hidden');
+      translationArea.classList.add('hidden');
+      setStatus('API key cleared. Please enter a new key.');
+    };
 
     if (apiKey) {
       apiModal.classList.add('hidden');
