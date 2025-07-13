@@ -83,77 +83,18 @@
 
     let apiKey = localStorage.getItem('geminiApiKey') || '';
     let recognition;
-    let sentenceQueue = [];
     let sentence_context = [];
-    let transcriptBuffer = '';
-    let translationTimeout;
-    let speakGermanEnabled = true;
+    let queuedText = ''; // Holds finalized text not yet sent for translation
+    let fullTranscript = ''; // Holds the entire displayed transcript
+    let canTranslate = true;
+    const RATE_LIMIT_MS = 10000;
+    const FORCE_TRANSLATE_WORD_COUNT = 30;
+    let speakGermanEnabled = false;
     let isStopping = false;
 
     function setStatus(msg) {
       statusBar.textContent = msg;
       statusBar.classList.remove('hidden');
-    }
-
-    function debounce(func, delay) {
-        clearTimeout(translationTimeout);
-        translationTimeout = setTimeout(func, delay);
-    }
-
-    function translateAndDisplay() {
-      if (sentenceQueue.length === 0) return;
-
-      const sentenceToTranslate = sentenceQueue.shift();
-      if (!sentenceToTranslate) return;
-
-      setStatus('Translating...');
-
-      const context = sentence_context.join(' ');
-
-      fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite-preview-06-17:generateContent?key=${apiKey}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          contents: [{ parts: [{ text: `Translate an English bible based church sermon to German. Focus on providing a natural and fluent German translation, even if the English source is a partial sentence. Maintain a conversational tone. Only provide the German translation and nothing else. Do not add any extra text, explanations, or conversational filler. CONTEXT (the last 3 sentences): ${context} NEW ENGLISH TEXT TO TRANSLATE: ${sentenceToTranslate}` }] }]
-        })
-      })
-      .then(res => res.json())
-      .then(data => {
-        if (data.error) {
-          console.error('Gemini API Error:', data.error);
-          setStatus(`Error: ${data.error.message}`);
-          sentenceQueue.unshift(sentenceToTranslate); // Add it back to the queue to retry
-          return;
-        }
-        const german = data.candidates[0]?.content?.parts[0]?.text || 'Error';
-        const newGermanSpan = document.createElement('span');
-        newGermanSpan.textContent = german + ' ';
-        newGermanSpan.classList.add('highlight-new-text');
-        germanText.appendChild(newGermanSpan);
-
-        setTimeout(() => {
-          newGermanSpan.classList.remove('highlight-new-text');
-        }, 2000);
-
-        if (speakGermanEnabled) {
-          speakGerman(german);
-        }
-        setStatus('Translation ready');
-        
-        sentence_context.push(sentenceToTranslate);
-        if (sentence_context.length > 3) {
-            sentence_context.shift();
-        }
-
-        if(sentenceQueue.length > 0){
-            translateAndDisplay();
-        }
-      })
-      .catch(error => {
-        console.error('Fetch Error:', error);
-        setStatus('Error: Could not connect to the translation service.');
-        sentenceQueue.unshift(sentenceToTranslate);
-      });
     }
 
     function speakGerman(textToSpeak) {
@@ -162,27 +103,70 @@
       speechSynthesis.speak(utter);
     }
 
-    function processTranscript() {
-        const terminators = /[.?!]/;
-        let sentencesFound = false;
+    function attemptTranslation(force = false) {
+        const wordCount = queuedText.split(/\s+/).filter(Boolean).length;
 
-        while (true) {
-            const match = transcriptBuffer.match(terminators);
-            if (match) {
-                const sentence = transcriptBuffer.substring(0, match.index + 1).trim();
-                if (sentence) {
-                    sentenceQueue.push(sentence);
-                    sentencesFound = true;
-                }
-                transcriptBuffer = transcriptBuffer.substring(match.index + 1);
-            } else {
-                break;
+        if (!canTranslate && !force && wordCount < FORCE_TRANSLATE_WORD_COUNT) {
+            return; // Rate limited and not forced, so we just queue.
+        }
+
+        if (queuedText.trim() === '') {
+            return; // Nothing to translate
+        }
+
+        canTranslate = false; // Lock for rate-limiting
+        const textToTranslate = queuedText.trim();
+        queuedText = ''; // Clear the queue
+
+        setStatus('Translating...');
+        const context = sentence_context.join(' ');
+
+        fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite-preview-06-17:generateContent?key=${apiKey}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                contents: [{ parts: [{ text: `Translate an English bible based church sermon to German. Focus on providing a natural and fluent German translation, even if the English source is a partial sentence. Maintain a conversational tone. Only provide the German translation and nothing else. Do not add any extra text, explanations, or conversational filler. CONTEXT (the last 3 sentences): ${context} NEW ENGLISH TEXT TO TRANSLATE: ${textToTranslate}` }] }]
+            })
+        })
+        .then(res => res.json())
+        .then(data => {
+            if (data.error) {
+                console.error('Gemini API Error:', data.error);
+                setStatus(`Error: ${data.error.message}`);
+                queuedText = textToTranslate + ' ' + queuedText; // Re-queue on failure
+                return;
             }
-        }
+            const german = data.candidates[0]?.content?.parts[0]?.text || 'Error';
+            const newGermanSpan = document.createElement('span');
+            newGermanSpan.textContent = german + ' ';
+            newGermanSpan.classList.add('highlight-new-text');
+            germanText.appendChild(newGermanSpan);
 
-        if (sentencesFound) {
-            debounce(translateAndDisplay, 500);
-        }
+            setTimeout(() => {
+                newGermanSpan.classList.remove('highlight-new-text');
+            }, 2000);
+
+            if (speakGermanEnabled) {
+                speakGerman(german);
+            }
+            setStatus('Translation ready');
+            
+            sentence_context.push(textToTranslate);
+            if (sentence_context.length > 3) {
+                sentence_context.shift();
+            }
+        })
+        .catch(error => {
+            console.error('Fetch Error:', error);
+            setStatus('Error: Could not connect to the translation service.');
+            queuedText = textToTranslate + ' ' + queuedText; // Re-queue on failure
+        })
+        .finally(() => {
+            setTimeout(() => {
+                canTranslate = true;
+                attemptTranslation();
+            }, RATE_LIMIT_MS);
+        });
     }
 
     function startListening() {
@@ -190,7 +174,7 @@
       recognition = new SpeechRecognition();
       recognition.continuous = true;
       recognition.lang = 'en-US';
-      recognition.interimResults = true; // We only care about final results
+      recognition.interimResults = true;
 
       recognition.onstart = () => {
         listeningIndicator.classList.remove('hidden');
@@ -200,18 +184,25 @@
       };
 
       recognition.onresult = (event) => {
-        let newFinalTranscript = '';
+        let interim_transcript = '';
+        let final_transcript_part = '';
+
         for (let i = event.resultIndex; i < event.results.length; ++i) {
-          if (event.results[i].isFinal) {
-            newFinalTranscript += event.results[i][0].transcript;
-          }
+            const transcript = event.results[i][0].transcript;
+            if (event.results[i].isFinal) {
+                final_transcript_part += transcript.trim() + ' ';
+            } else {
+                interim_transcript += transcript;
+            }
         }
 
-        if (newFinalTranscript) {
-            transcriptBuffer += newFinalTranscript;
-            englishText.textContent = transcriptBuffer;
-            processTranscript();
+        if (final_transcript_part) {
+            queuedText += final_transcript_part;
+            fullTranscript += final_transcript_part;
+            attemptTranslation(); // A pause occurred, try to translate.
         }
+
+        englishText.textContent = fullTranscript + interim_transcript;
       };
 
       recognition.onerror = (e) => { 
@@ -221,12 +212,7 @@
 
       recognition.onend = () => {
         if (isStopping) {
-            if (transcriptBuffer.trim()) {
-                sentenceQueue.push(transcriptBuffer.trim() + '.');
-                transcriptBuffer = '';
-                debounce(translateAndDisplay, 500);
-            }
-
+            attemptTranslation(true); // Force translation of any remaining text
             listeningIndicator.classList.add('hidden');
             micBtn.classList.remove('hidden');
             stopBtn.classList.add('hidden');
@@ -246,12 +232,13 @@
         apiModal.classList.remove('hidden');
         return;
       }
-      sentenceQueue = [];
       sentence_context = [];
-      transcriptBuffer = '';
+      queuedText = '';
+      fullTranscript = '';
       englishText.textContent = '';
       germanText.textContent = '';
       isStopping = false;
+      canTranslate = true;
 
       startListening();
     };
