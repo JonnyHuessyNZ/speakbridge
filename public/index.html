@@ -86,6 +86,7 @@
     let sentenceQueue = [];
     let sentence_context = [];
     let transcriptBuffer = '';
+    let processed_offset = 0;
     let translationTimeout;
     let speakGermanEnabled = true;
     let isStopping = false;
@@ -163,25 +164,22 @@
     }
 
     function processTranscript() {
-        // Sentence terminators
         const terminators = /[.?!]/;
-        
-        // Add a space to the end of the buffer to ensure the last word is processed
-        let processingBuffer = transcriptBuffer + ' ';
+        let processing_part = transcriptBuffer.substring(processed_offset);
+        let sentencesFound = false;
 
-        while (processingBuffer.match(terminators)) {
-            const sentenceMatch = processingBuffer.match(terminators);
-            const sentence = processingBuffer.substring(0, sentenceMatch.index + 1).trim();
+        while (processing_part.match(terminators)) {
+            const sentenceMatch = processing_part.match(terminators);
+            const sentence = processing_part.substring(0, sentenceMatch.index + 1).trim();
             if (sentence) {
                 sentenceQueue.push(sentence);
-                englishText.textContent += sentence + ' ';
+                sentencesFound = true;
             }
-            processingBuffer = processingBuffer.substring(sentenceMatch.index + 1);
+            processed_offset += sentenceMatch.index + 1;
+            processing_part = transcriptBuffer.substring(processed_offset);
         }
 
-        transcriptBuffer = processingBuffer.trim();
-        
-        if (sentenceQueue.length > 0) {
+        if (sentencesFound) {
             debounce(translateAndDisplay, 500);
         }
     }
@@ -190,9 +188,9 @@
     function startListening() {
       const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
       recognition = new SpeechRecognition();
-      recognition.continuous = true;
+      recognition.continuous = false;
       recognition.lang = 'en-US';
-      recognition.interimResults = false;
+      recognition.interimResults = true;
 
       recognition.onstart = () => {
         listeningIndicator.classList.remove('hidden');
@@ -202,31 +200,35 @@
       };
 
       recognition.onresult = (event) => {
-        let newFinalTranscript = '';
+        let interim_transcript = '';
+        let final_transcript_part = '';
+
         for (let i = event.resultIndex; i < event.results.length; ++i) {
           if (event.results[i].isFinal) {
-            newFinalTranscript += event.results[i][0].transcript;
+            final_transcript_part += event.results[i][0].transcript;
+          } else {
+            interim_transcript += event.results[i][0].transcript;
           }
         }
-        if (newFinalTranscript) {
-            transcriptBuffer += newFinalTranscript;
+
+        if (final_transcript_part) {
+            transcriptBuffer += final_transcript_part;
             processTranscript();
         }
+        
+        englishText.textContent = transcriptBuffer + interim_transcript;
       };
 
-      recognition.onerror = (e) => {
-        setStatus('Error: ' + e.error);
-        console.error('SpeechRecognition Error:', e);
-        isStopping = true; // Stop on error
+      recognition.onerror = (e) => { 
+        setStatus('Error: ' + e.error); 
+        console.error('SpeechRecognition Error:', e); 
+        isStopping = true;
       };
 
       recognition.onend = () => {
         if (isStopping) {
-            // Process any remaining text in the buffer as a sentence
-            if(transcriptBuffer.trim()){
-                sentenceQueue.push(transcriptBuffer.trim() + '.');
-                englishText.textContent += transcriptBuffer.trim() + '. ';
-                transcriptBuffer = '';
+            if(transcriptBuffer.substring(processed_offset).trim()){
+                sentenceQueue.push(transcriptBuffer.substring(processed_offset).trim() + '.');
                 debounce(translateAndDisplay, 500);
             }
 
@@ -235,7 +237,6 @@
             stopBtn.classList.add('hidden');
             setStatus('Stopped listening');
         } else {
-            // Automatic restart
             if (recognition) {
                 recognition.start();
             }
@@ -250,10 +251,10 @@
         apiModal.classList.remove('hidden');
         return;
       }
-      // Reset state for a new session
       sentenceQueue = [];
       sentence_context = [];
       transcriptBuffer = '';
+      processed_offset = 0;
       englishText.textContent = '';
       germanText.textContent = '';
       isStopping = false;
