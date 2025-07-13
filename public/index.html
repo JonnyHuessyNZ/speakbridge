@@ -162,37 +162,12 @@
       speechSynthesis.speak(utter);
     }
 
-    function processTranscript() {
-        // Sentence terminators
-        const terminators = /[.?!]/;
-        
-        // Add a space to the end of the buffer to ensure the last word is processed
-        let processingBuffer = transcriptBuffer + ' ';
-
-        while (processingBuffer.match(terminators)) {
-            const sentenceMatch = processingBuffer.match(terminators);
-            const sentence = processingBuffer.substring(0, sentenceMatch.index + 1).trim();
-            if (sentence) {
-                sentenceQueue.push(sentence);
-                englishText.textContent += sentence + ' ';
-            }
-            processingBuffer = processingBuffer.substring(sentenceMatch.index + 1);
-        }
-
-        transcriptBuffer = processingBuffer.trim();
-        
-        if (sentenceQueue.length > 0) {
-            debounce(translateAndDisplay, 500);
-        }
-    }
-
-
     function startListening() {
       const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
       recognition = new SpeechRecognition();
       recognition.continuous = true;
       recognition.lang = 'en-US';
-      recognition.interimResults = false;
+      recognition.interimResults = true;
 
       recognition.onstart = () => {
         listeningIndicator.classList.remove('hidden');
@@ -202,41 +177,42 @@
       };
 
       recognition.onresult = (event) => {
-        let newFinalTranscript = '';
+        let interim_transcript = '';
+        let final_transcript = '';
+
         for (let i = event.resultIndex; i < event.results.length; ++i) {
+          const transcript_part = event.results[i][0].transcript;
           if (event.results[i].isFinal) {
-            newFinalTranscript += event.results[i][0].transcript;
+            final_transcript += transcript_part;
+          } else {
+            interim_transcript += transcript_part;
           }
         }
-        if (newFinalTranscript) {
-            transcriptBuffer += newFinalTranscript;
-            processTranscript();
+
+        if (final_transcript.trim()) {
+            const sentence = final_transcript.trim();
+            sentenceQueue.push(sentence);
+            transcriptBuffer += sentence + ' ';
+            debounce(translateAndDisplay, 500);
         }
+        
+        englishText.textContent = transcriptBuffer + interim_transcript;
       };
 
-      recognition.onerror = (e) => {
-        setStatus('Error: ' + e.error);
-        console.error('SpeechRecognition Error:', e);
-        isStopping = true; // Stop on error
+      recognition.onerror = (e) => { 
+        setStatus('Error: ' + e.error); 
+        console.error('SpeechRecognition Error:', e); 
       };
 
       recognition.onend = () => {
         if (isStopping) {
-            // Process any remaining text in the buffer as a sentence
-            if(transcriptBuffer.trim()){
-                sentenceQueue.push(transcriptBuffer.trim() + '.');
-                englishText.textContent += transcriptBuffer.trim() + '. ';
-                transcriptBuffer = '';
-                debounce(translateAndDisplay, 500);
-            }
-
             listeningIndicator.classList.add('hidden');
             micBtn.classList.remove('hidden');
             stopBtn.classList.add('hidden');
             setStatus('Stopped listening');
         } else {
-            // Automatic restart
             if (recognition) {
+                console.log('restarting recognition');
                 recognition.start();
             }
         }
@@ -250,7 +226,6 @@
         apiModal.classList.remove('hidden');
         return;
       }
-      // Reset state for a new session
       sentenceQueue = [];
       sentence_context = [];
       transcriptBuffer = '';
