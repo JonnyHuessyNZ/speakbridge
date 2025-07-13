@@ -61,7 +61,7 @@
       <button id="micBtn" class="w-16 h-16 rounded-full bg-white text-indigo-600 flex items-center justify-center shadow-lg text-2xl">🎤</button>
       <button id="stopBtn" class="w-16 h-16 rounded-full bg-red-500 text-white flex items-center justify-center shadow-lg text-2xl hidden">🛑</button>
       <button id="resetApiKeyBtn" class="w-16 h-16 rounded-full bg-gray-500 text-white flex items-center justify-center shadow-lg text-2xl">🔑</button>
-      <button id="speakerBtn" class="w-16 h-16 rounded-full bg-green-500 text-white flex items-center justify-center shadow-lg text-2xl">🔊</button>
+      <button id="speakerBtn" class="w-16 h-16 rounded-full bg-red-500 text-white flex items-center justify-center shadow-lg text-2xl">🔇</button>
     </div>
   </div>
 
@@ -90,8 +90,8 @@
     let apiKey = localStorage.getItem('geminiApiKey') || '';
     let recognition;
     let sentence_context = [];
-    let transcriptBuffer = ''; // Holds finalized text that hasn't been queued yet.
-    let fullTranscript = ''; // Holds the entire displayed transcript.
+    let translationBuffer = ''; // Holds text ready for the translation queue.
+    let lastProcessedTranscript = ''; // The end of the last successfully queued text.
     let translationQueue = [];
     let isTranslating = false;
     let speakGermanEnabled = false;
@@ -167,13 +167,13 @@
     }
 
     function queueAndProcess(force = false) {
-        const wordCount = transcriptBuffer.split(/\s+/).filter(Boolean).length;
-        const shouldTranslate = transcriptBuffer.trim() && (force || wordCount >= FORCE_TRANSLATE_WORD_COUNT);
+        const wordCount = translationBuffer.split(/\s+/).filter(Boolean).length;
+        const shouldTranslate = translationBuffer.trim() && (force || wordCount >= FORCE_TRANSLATE_WORD_COUNT);
 
         if (shouldTranslate) {
             clearTimeout(pauseTimer);
-            translationQueue.push(transcriptBuffer.trim());
-            transcriptBuffer = '';
+            translationQueue.push(translationBuffer.trim());
+            translationBuffer = '';
             processTranslationQueue();
         }
     }
@@ -194,30 +194,30 @@
       };
 
       recognition.onresult = (event) => {
-        clearTimeout(pauseTimer); // Clear pause timer on new speech
+        clearTimeout(pauseTimer);
         let interim_transcript = '';
-        let final_transcript_part = '';
+        let final_transcript = '';
 
-        for (let i = event.resultIndex; i < event.results.length; ++i) {
-            const transcript = event.results[i][0].transcript;
+        for (let i = 0; i < event.results.length; ++i) {
+            const transcript_part = event.results[i][0].transcript;
             if (event.results[i].isFinal) {
-                final_transcript_part += transcript.trim() + ' ';
+                final_transcript += transcript_part;
             } else {
-                interim_transcript += transcript;
+                interim_transcript += transcript_part;
             }
         }
-
-        if (final_transcript_part) {
-            transcriptBuffer += final_transcript_part;
-            fullTranscript += final_transcript_part;
-            queueAndProcess(); // Check if word count forces translation
+        
+        const newFinalText = final_transcript.substring(lastProcessedTranscript.length);
+        if (newFinalText) {
+            translationBuffer += newFinalText;
+            lastProcessedTranscript = final_transcript;
+            queueAndProcess();
         }
 
-        englishText.textContent = fullTranscript + interim_transcript;
+        englishText.textContent = final_transcript + interim_transcript;
 
-        // Set a new pause timer
         pauseTimer = setTimeout(() => {
-            queueAndProcess(true); // Force translation on pause
+            queueAndProcess(true);
         }, PAUSE_DETECTION_MS);
       };
 
@@ -228,14 +228,14 @@
 
       recognition.onend = () => {
         if (isStopping) {
-            queueAndProcess(true); // Force translation of any remaining text
+            queueAndProcess(true);
             listeningIndicator.classList.add('hidden');
             micBtn.classList.remove('hidden');
             stopBtn.classList.add('hidden');
             setStatus('Stopped listening');
         } else {
             if (recognition) {
-                recognition.start(); // Auto-restart
+                recognition.start();
             }
         }
       };
@@ -250,8 +250,8 @@
         return;
       }
       sentence_context = [];
-      transcriptBuffer = '';
-      fullTranscript = '';
+      translationBuffer = '';
+      lastProcessedTranscript = '';
       translationQueue = [];
       englishText.textContent = '';
       germanText.textContent = '';
@@ -281,9 +281,15 @@
 
     speakerBtn.onclick = () => {
       speakGermanEnabled = !speakGermanEnabled;
-      speakerBtn.classList.toggle('bg-green-500');
-      speakerBtn.classList.toggle('bg-red-500');
-      speakerBtn.textContent = speakGermanEnabled ? '🔊' : '🔇';
+      if (speakGermanEnabled) {
+        speakerBtn.classList.remove('bg-red-500');
+        speakerBtn.classList.add('bg-green-500');
+        speakerBtn.textContent = '🔊';
+      } else {
+        speakerBtn.classList.remove('bg-green-500');
+        speakerBtn.classList.add('bg-red-500');
+        speakerBtn.textContent = '🔇';
+      }
     };
 
     resetApiKeyBtn.onclick = () => {
