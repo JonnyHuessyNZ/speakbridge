@@ -1,4 +1,3 @@
-
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -6,16 +5,12 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>SpeakBridge</title>
   <script src="https://cdn.tailwindcss.com"></script>
-  <script src="/config.js"></script>
-  <script>
-    const apiKey = window.GEMINI_API_KEY;
-    console.log("API Key loaded:", apiKey ? "✅" : "❌");
-  </script>
   <style>
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap');
     * { font-family: 'Inter', sans-serif; }
     .glass { backdrop-filter: blur(8px); background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.2); }
     .pulse { animation: pulse 2s infinite; }
+    .highlight-new-text { background-color: rgba(255, 255, 0, 0.3); transition: background-color 1s ease-out; }
     @keyframes pulse {
       0% { transform: scale(1); opacity: 1; }
       80%, 100% { transform: scale(1.8); opacity: 0; }
@@ -27,27 +22,35 @@
     <!-- Header -->
     <header class="text-center mb-6">
       <h1 class="text-3xl font-bold">🌐 SpeakBridge</h1>
-      <p class="text-white/80">Your AI Translation Companion</p>
+      <p class="text-white/80">Your English-Deutsch Translation Companion</p>
     </header>
 
-    
+    <!-- API Key Entry -->
+    <div id="apiModal" class="glass p-6 rounded-xl max-w-md mx-auto mb-6">
+      <h2 class="text-xl font-semibold mb-2">Enter your Gemini API key</h2>
+      <input id="apiKeyInput" class="w-full p-2 rounded bg-white/20 placeholder-white text-white mb-4" placeholder="API Key" type="password" />
+      <button id="saveApiKey" class="w-full bg-white text-indigo-600 font-semibold py-2 rounded">Save</button>
+    </div>
 
     <!-- Status Bar -->
     <div id="statusBar" class="glass p-2 rounded-full text-center text-sm font-medium mb-4 hidden">Ready to translate</div>
 
     <!-- Translation Cards -->
     <div id="translationArea" class="space-y-4 max-w-md mx-auto hidden">
-      <div class="glass p-4 rounded-xl">
+      <div id="englishTextContainer" class="glass p-4 rounded-xl hidden">
         <div class="flex justify-between items-center mb-2">
           <span class="font-semibold">🇺🇸 English</span>
           <span id="listeningIndicator" class="text-red-300 text-sm hidden">Listening...</span>
         </div>
         <p id="englishText" class="min-h-[40px] italic text-white/80">Tap the mic to start</p>
       </div>
+      <div class="flex items-center justify-center mb-4">
+        <input type="checkbox" id="showEnglishCheckbox" class="mr-2">
+        <label for="showEnglishCheckbox" class="text-white">Show English Transcription</label>
+      </div>
       <div class="glass p-4 rounded-xl">
         <div class="flex justify-between items-center mb-2">
           <span class="font-semibold">🇩🇪 German</span>
-          <button id="speakBtn" class="text-green-400 text-sm hidden">🔊 Speak</button>
         </div>
         <p id="germanText" class="min-h-[40px] italic text-white/80">Translation will appear here</p>
       </div>
@@ -57,53 +60,61 @@
     <div class="fixed bottom-6 right-6 flex space-x-4">
       <button id="micBtn" class="w-16 h-16 rounded-full bg-white text-indigo-600 flex items-center justify-center shadow-lg text-2xl">🎤</button>
       <button id="stopBtn" class="w-16 h-16 rounded-full bg-red-500 text-white flex items-center justify-center shadow-lg text-2xl hidden">🛑</button>
+      <button id="resetApiKeyBtn" class="w-16 h-16 rounded-full bg-gray-500 text-white flex items-center justify-center shadow-lg text-2xl">🔑</button>
+      <button id="speakerBtn" class="w-16 h-16 rounded-full bg-green-500 text-white flex items-center justify-center shadow-lg text-2xl">🔊</button>
     </div>
   </div>
 
   <script>
+    const apiKeyInput = document.getElementById('apiKeyInput');
+    const saveApiKey = document.getElementById('saveApiKey');
     const micBtn = document.getElementById('micBtn');
     const englishText = document.getElementById('englishText');
     const germanText = document.getElementById('germanText');
     const statusBar = document.getElementById('statusBar');
-    const speakBtn = document.getElementById('speakBtn');
     const translationArea = document.getElementById('translationArea');
+    const apiModal = document.getElementById('apiModal');
     const listeningIndicator = document.getElementById('listeningIndicator');
+    const resetApiKeyBtn = document.getElementById('resetApiKeyBtn');
     const stopBtn = document.getElementById('stopBtn');
+    const englishTextContainer = document.getElementById('englishTextContainer');
+    const showEnglishCheckbox = document.getElementById('showEnglishCheckbox');
+    const speakerBtn = document.getElementById('speakerBtn');
 
-    // let apiKey = process.env.NEXT_PUBLIC_GEMINI_API_KEY || localStorage.getItem('geminiApiKey') || '';
-    // let apiKey = window.GEMINI_API_KEY;
+    let apiKey = localStorage.getItem('geminiApiKey') || '';
     let recognition;
-    let accumulatedEnglishText = '';
-    let translatedEnglishText = '';
-    let isDirty = false;
-    let translateInterval;
-
-    if (!apiKey) {
-        alert("API Key is not set. Please contact Jonathan.");
-    }
+    let sentenceQueue = [];
+    let sentence_context = [];
+    let transcriptBuffer = '';
+    let translationTimeout;
+    let speakGermanEnabled = true;
+    let isStopping = false;
 
     function setStatus(msg) {
       statusBar.textContent = msg;
       statusBar.classList.remove('hidden');
     }
 
-    // Initial setup
-    translationArea.classList.remove('hidden');
-    setStatus('Ready to translate');
+    function debounce(func, delay) {
+        clearTimeout(translationTimeout);
+        translationTimeout = setTimeout(func, delay);
+    }
 
     function translateAndDisplay() {
-      if (!isDirty) return;
+      if (sentenceQueue.length === 0) return;
+
+      const sentenceToTranslate = sentenceQueue.shift();
+      if (!sentenceToTranslate) return;
 
       setStatus('Translating...');
-      isDirty = false;
 
-      const newText = accumulatedEnglishText.substring(translatedEnglishText.length);
+      const context = sentence_context.join(' ');
 
-      fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-lite:generateContent?key=${apiKey}`, {
+      fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite-preview-06-17:generateContent?key=${apiKey}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          contents: [{ parts: [{ text: `Translate the following English text to German. Only provide the German translation and nothing else. Keep the translation in sync with the english source text provided, even if it's a partial sentence. Do not add any extra text or explanations. ENGLISH SOURCE TEXT: ${newText}` }] }]
+          contents: [{ parts: [{ text: `Translate an English bible based church sermon to German. Focus on providing a natural and fluent German translation, even if the English source is a partial sentence. Maintain a conversational tone. Only provide the German translation and nothing else. Do not add any extra text, explanations, or conversational filler. CONTEXT (the last 3 sentences): ${context} NEW ENGLISH TEXT TO TRANSLATE: ${sentenceToTranslate}` }] }]
         })
       })
       .then(res => res.json())
@@ -111,75 +122,192 @@
         if (data.error) {
           console.error('Gemini API Error:', data.error);
           setStatus(`Error: ${data.error.message}`);
+          sentenceQueue.unshift(sentenceToTranslate); // Add it back to the queue to retry
           return;
         }
         const german = data.candidates[0]?.content?.parts[0]?.text || 'Error';
-        germanText.textContent += german + ' ';
-        translatedEnglishText = accumulatedEnglishText;
-        speakGerman();
-        speakBtn.classList.remove('hidden');
+        const newGermanSpan = document.createElement('span');
+        newGermanSpan.textContent = german + ' ';
+        newGermanSpan.classList.add('highlight-new-text');
+        germanText.appendChild(newGermanSpan);
+
+        setTimeout(() => {
+          newGermanSpan.classList.remove('highlight-new-text');
+        }, 2000);
+
+        if (speakGermanEnabled) {
+          speakGerman(german);
+        }
         setStatus('Translation ready');
+        
+        sentence_context.push(sentenceToTranslate);
+        if (sentence_context.length > 3) {
+            sentence_context.shift();
+        }
+
+        if(sentenceQueue.length > 0){
+            translateAndDisplay();
+        }
       })
       .catch(error => {
         console.error('Fetch Error:', error);
         setStatus('Error: Could not connect to the translation service.');
+        sentenceQueue.unshift(sentenceToTranslate);
       });
     }
 
-    function speakGerman() {
-      const utter = new SpeechSynthesisUtterance(germanText.textContent);
+    function speakGerman(textToSpeak) {
+      const utter = new SpeechSynthesisUtterance(textToSpeak);
       utter.lang = 'de-DE';
       speechSynthesis.speak(utter);
     }
 
+    function processTranscript() {
+        // Sentence terminators
+        const terminators = /[.?!]/;
+        
+        // Add a space to the end of the buffer to ensure the last word is processed
+        let processingBuffer = transcriptBuffer + ' ';
+
+        while (processingBuffer.match(terminators)) {
+            const sentenceMatch = processingBuffer.match(terminators);
+            const sentence = processingBuffer.substring(0, sentenceMatch.index + 1).trim();
+            if (sentence) {
+                sentenceQueue.push(sentence);
+                englishText.textContent += sentence + ' ';
+            }
+            processingBuffer = processingBuffer.substring(sentenceMatch.index + 1);
+        }
+
+        transcriptBuffer = processingBuffer.trim();
+        
+        if (sentenceQueue.length > 0) {
+            debounce(translateAndDisplay, 500);
+        }
+    }
+
+
     function startListening() {
-      console.log('Attempting to start listening...');
       const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-      if (!SpeechRecognition) {
-        console.error('Speech Recognition API not supported in this browser.');
-        setStatus('Error: Speech Recognition not supported.');
-        return;
-      }
       recognition = new SpeechRecognition();
       recognition.continuous = true;
       recognition.lang = 'en-US';
       recognition.interimResults = false;
 
       recognition.onstart = () => {
-        accumulatedEnglishText = '';
-        translatedEnglishText = '';
-        germanText.textContent = '';
         listeningIndicator.classList.remove('hidden');
         micBtn.classList.add('hidden');
         stopBtn.classList.remove('hidden');
         setStatus('Listening...');
-        translateInterval = setInterval(translateAndDisplay, 3000);
       };
 
       recognition.onresult = (event) => {
-        const transcript = event.results[0][0].transcript;
-        accumulatedEnglishText += transcript + ' ';
-        englishText.textContent = accumulatedEnglishText;
-        isDirty = true;
+        let newFinalTranscript = '';
+        for (let i = event.resultIndex; i < event.results.length; ++i) {
+          if (event.results[i].isFinal) {
+            newFinalTranscript += event.results[i][0].transcript;
+          }
+        }
+        if (newFinalTranscript) {
+            transcriptBuffer += newFinalTranscript;
+            processTranscript();
+        }
       };
 
-      recognition.onerror = (e) => setStatus('Error: ' + e.error);
+      recognition.onerror = (e) => {
+        setStatus('Error: ' + e.error);
+        console.error('SpeechRecognition Error:', e);
+        isStopping = true; // Stop on error
+      };
 
       recognition.onend = () => {
-        listeningIndicator.classList.add('hidden');
-        micBtn.classList.remove('hidden');
-        stopBtn.classList.add('hidden');
-        clearInterval(translateInterval);
+        if (isStopping) {
+            // Process any remaining text in the buffer as a sentence
+            if(transcriptBuffer.trim()){
+                sentenceQueue.push(transcriptBuffer.trim() + '.');
+                englishText.textContent += transcriptBuffer.trim() + '. ';
+                transcriptBuffer = '';
+                debounce(translateAndDisplay, 500);
+            }
+
+            listeningIndicator.classList.add('hidden');
+            micBtn.classList.remove('hidden');
+            stopBtn.classList.add('hidden');
+            setStatus('Stopped listening');
+        } else {
+            // Automatic restart
+            if (recognition) {
+                recognition.start();
+            }
+        }
       };
 
       recognition.start();
     }
 
     micBtn.onclick = () => {
-      console.log('Microphone button clicked.');
-      console.log('API Key:', apiKey ? 'Set' : 'Not Set');
+      if (!apiKey) {
+        apiModal.classList.remove('hidden');
+        return;
+      }
+      // Reset state for a new session
+      sentenceQueue = [];
+      sentence_context = [];
+      transcriptBuffer = '';
+      englishText.textContent = '';
+      germanText.textContent = '';
+      isStopping = false;
+
       startListening();
     };
+
+    saveApiKey.onclick = () => {
+      const key = apiKeyInput.value.trim();
+      if (key) {
+        apiKey = key;
+        localStorage.setItem('geminiApiKey', key);
+        apiModal.classList.add('hidden');
+        translationArea.classList.remove('hidden');
+        setStatus('Ready to translate');
+      }
+    };
+
+    stopBtn.onclick = () => {
+      isStopping = true;
+      if (recognition) {
+        recognition.stop();
+      }
+    };
+
+    speakerBtn.onclick = () => {
+      speakGermanEnabled = !speakGermanEnabled;
+      speakerBtn.classList.toggle('bg-green-500');
+      speakerBtn.classList.toggle('bg-red-500');
+      speakerBtn.textContent = speakGermanEnabled ? '🔊' : '🔇';
+    };
+
+    resetApiKeyBtn.onclick = () => {
+      localStorage.removeItem('geminiApiKey');
+      apiKey = '';
+      apiModal.classList.remove('hidden');
+      translationArea.classList.add('hidden');
+      setStatus('API key cleared. Please enter a new key.');
+    };
+
+    if (apiKey) {
+      apiModal.classList.add('hidden');
+      translationArea.classList.remove('hidden');
+      setStatus('Ready to translate');
+    }
+
+    // Toggle English text visibility
+    showEnglishCheckbox.addEventListener('change', () => {
+      if (showEnglishCheckbox.checked) {
+        englishTextContainer.classList.remove('hidden');
+      } else {
+        englishTextContainer.classList.add('hidden');
+      }
+    });
   </script>
 </body>
 </html>
