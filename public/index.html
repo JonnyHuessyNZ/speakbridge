@@ -36,13 +36,13 @@
     <div id="statusBar" class="glass p-2 rounded-full text-center text-sm font-medium mb-4 hidden">Ready to translate</div>
 
     <!-- Translation Cards -->
-    <div id="translationArea" class="space-y-4 max-w-md mx-auto hidden">
+    <div id="translationArea" class="space-y-4 max-w-4xl mx-auto hidden flex flex-col flex-grow">
       <div id="englishTextContainer" class="glass p-4 rounded-xl hidden">
         <div class="flex justify-between items-center mb-2">
           <span class="font-semibold">🇺🇸 English</span>
           <span id="listeningIndicator" class="text-red-300 text-sm hidden">Listening...</span>
         </div>
-        <p id="englishText" class="min-h-[40px] italic text-white/80">Tap the mic to start</p>
+        <div id="englishText" class="min-h-[40px] italic text-white/80 max-h-60 overflow-y-auto">Tap the mic to start</div>
       </div>
       <div class="flex items-center justify-center mb-4">
         <input type="checkbox" id="showEnglishCheckbox" class="mr-2">
@@ -52,7 +52,7 @@
         <div class="flex justify-between items-center mb-2">
           <span class="font-semibold">🇩🇪 German</span>
         </div>
-        <p id="germanText" class="min-h-[40px] italic text-white/80">Übersetzung erscheint hier.</p>
+        <div id="germanText" class="min-h-[40px] italic text-white/80 max-h-60 overflow-y-auto">Übersetzung erscheint hier.</div>
       </div>
     </div>
 
@@ -97,6 +97,17 @@
     let speakGermanEnabled = false;
     let isStopping = false;
     let pauseTimer;
+    let germanMaleVoice = null;
+
+    // Load voices as soon as they are available
+    speechSynthesis.onvoiceschanged = () => {
+      const voices = speechSynthesis.getVoices();
+      germanMaleVoice = voices.find(voice => voice.lang === 'de-DE' && voice.name.includes('male') || voice.name.includes('Männlich'));
+      // Fallback to any German voice if a specific male voice isn't found
+      if (!germanMaleVoice) {
+        germanMaleVoice = voices.find(voice => voice.lang === 'de-DE');
+      }
+    };
 
     function setStatus(msg) {
       statusBar.textContent = msg;
@@ -106,6 +117,9 @@
     function speakGerman(textToSpeak) {
       const utter = new SpeechSynthesisUtterance(textToSpeak);
       utter.lang = 'de-DE';
+      if (germanMaleVoice) {
+        utter.voice = germanMaleVoice;
+      }
       speechSynthesis.speak(utter);
     }
 
@@ -140,6 +154,9 @@
             newGermanSpan.textContent = german + ' ';
             newGermanSpan.classList.add('highlight-new-text');
             germanText.appendChild(newGermanSpan);
+            requestAnimationFrame(() => {
+                germanText.scrollTop = germanText.scrollHeight;
+            });
 
             setTimeout(() => { newGermanSpan.classList.remove('highlight-new-text'); }, 2000);
 
@@ -222,11 +239,11 @@
 
         // Display the authoritative final transcript plus the current interim (unconfirmed) speech
         englishText.textContent = fullTranscript + currentInterimTranscript;
+        requestAnimationFrame(() => {
+            englishText.scrollTop = englishText.scrollHeight;
+        });
 
-        // Set a new pause timer
-        pauseTimer = setTimeout(() => {
-            queueAndProcess(true); // Force translation on pause
-        }, PAUSE_DETECTION_MS);
+        queueAndProcess(false); // Check for word count trigger
       };
 
       recognition.onerror = (e) => { 
@@ -318,8 +335,12 @@
     showEnglishCheckbox.addEventListener('change', () => {
       if (showEnglishCheckbox.checked) {
         englishTextContainer.classList.remove('hidden');
+        germanText.classList.add('max-h-60');
+        germanText.classList.remove('flex-grow');
       } else {
         englishTextContainer.classList.add('hidden');
+        germanText.classList.remove('max-h-60');
+        germanText.classList.add('flex-grow');
       }
     });
   </script>
