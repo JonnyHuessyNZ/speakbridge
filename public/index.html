@@ -22,7 +22,7 @@
     <!-- Header -->
     <header class="text-center mb-6">
       <h1 class="text-3xl font-bold">🌐 SpeakBridge</h1>
-      <p class="text-white/80">Your English-Deutsch Translation Companion</p>
+      <p class="text-white/80">Übersetze Englisch -> Deutsch</p>
     </header>
 
     <!-- API Key Entry -->
@@ -52,7 +52,7 @@
         <div class="flex justify-between items-center mb-2">
           <span class="font-semibold">🇩🇪 German</span>
         </div>
-        <p id="germanText" class="min-h-[40px] italic text-white/80">Translation will appear here</p>
+        <p id="germanText" class="min-h-[40px] italic text-white/80">Übersetzung erscheint hier.</p>
       </div>
     </div>
 
@@ -86,7 +86,6 @@
     let sentenceQueue = [];
     let sentence_context = [];
     let transcriptBuffer = '';
-    let processed_offset = 0;
     let translationTimeout;
     let speakGermanEnabled = true;
     let isStopping = false;
@@ -164,22 +163,25 @@
     }
 
     function processTranscript() {
+        // Sentence terminators
         const terminators = /[.?!]/;
-        let processing_part = transcriptBuffer.substring(processed_offset);
-        let sentencesFound = false;
+        
+        // Add a space to the end of the buffer to ensure the last word is processed
+        let processingBuffer = transcriptBuffer + ' ';
 
-        while (processing_part.match(terminators)) {
-            const sentenceMatch = processing_part.match(terminators);
-            const sentence = processing_part.substring(0, sentenceMatch.index + 1).trim();
+        while (processingBuffer.match(terminators)) {
+            const sentenceMatch = processingBuffer.match(terminators);
+            const sentence = processingBuffer.substring(0, sentenceMatch.index + 1).trim();
             if (sentence) {
                 sentenceQueue.push(sentence);
-                sentencesFound = true;
+                englishText.textContent += sentence + ' ';
             }
-            processed_offset += sentenceMatch.index + 1;
-            processing_part = transcriptBuffer.substring(processed_offset);
+            processingBuffer = processingBuffer.substring(sentenceMatch.index + 1);
         }
 
-        if (sentencesFound) {
+        transcriptBuffer = processingBuffer.trim();
+        
+        if (sentenceQueue.length > 0) {
             debounce(translateAndDisplay, 500);
         }
     }
@@ -188,9 +190,9 @@
     function startListening() {
       const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
       recognition = new SpeechRecognition();
-      recognition.continuous = false;
+      recognition.continuous = true;
       recognition.lang = 'en-US';
-      recognition.interimResults = true;
+      recognition.interimResults = false;
 
       recognition.onstart = () => {
         listeningIndicator.classList.remove('hidden');
@@ -200,35 +202,31 @@
       };
 
       recognition.onresult = (event) => {
-        let interim_transcript = '';
-        let final_transcript_part = '';
-
+        let newFinalTranscript = '';
         for (let i = event.resultIndex; i < event.results.length; ++i) {
           if (event.results[i].isFinal) {
-            final_transcript_part += event.results[i][0].transcript;
-          } else {
-            interim_transcript += event.results[i][0].transcript;
+            newFinalTranscript += event.results[i][0].transcript;
           }
         }
-
-        if (final_transcript_part) {
-            transcriptBuffer += final_transcript_part;
+        if (newFinalTranscript) {
+            transcriptBuffer += newFinalTranscript;
             processTranscript();
         }
-        
-        englishText.textContent = transcriptBuffer + interim_transcript;
       };
 
-      recognition.onerror = (e) => { 
-        setStatus('Error: ' + e.error); 
-        console.error('SpeechRecognition Error:', e); 
-        isStopping = true;
+      recognition.onerror = (e) => {
+        setStatus('Error: ' + e.error);
+        console.error('SpeechRecognition Error:', e);
+        isStopping = true; // Stop on error
       };
 
       recognition.onend = () => {
         if (isStopping) {
-            if(transcriptBuffer.substring(processed_offset).trim()){
-                sentenceQueue.push(transcriptBuffer.substring(processed_offset).trim() + '.');
+            // Process any remaining text in the buffer as a sentence
+            if(transcriptBuffer.trim()){
+                sentenceQueue.push(transcriptBuffer.trim() + '.');
+                englishText.textContent += transcriptBuffer.trim() + '. ';
+                transcriptBuffer = '';
                 debounce(translateAndDisplay, 500);
             }
 
@@ -237,6 +235,7 @@
             stopBtn.classList.add('hidden');
             setStatus('Stopped listening');
         } else {
+            // Automatic restart
             if (recognition) {
                 recognition.start();
             }
@@ -251,10 +250,10 @@
         apiModal.classList.remove('hidden');
         return;
       }
+      // Reset state for a new session
       sentenceQueue = [];
       sentence_context = [];
       transcriptBuffer = '';
-      processed_offset = 0;
       englishText.textContent = '';
       germanText.textContent = '';
       isStopping = false;
