@@ -91,7 +91,7 @@
     let recognition;
     let sentence_context = [];
     let translationBuffer = ''; // Holds text ready for the translation queue.
-    let lastProcessedTranscript = ''; // The end of the last successfully queued text.
+    let fullTranscript = ''; // Authoritative final transcript.
     let translationQueue = [];
     let isTranslating = false;
     let speakGermanEnabled = false;
@@ -194,30 +194,38 @@
       };
 
       recognition.onresult = (event) => {
-        clearTimeout(pauseTimer);
-        let interim_transcript = '';
-        let final_transcript = '';
+        clearTimeout(pauseTimer); // Clear pause timer on new speech activity
 
+        let currentInterimTranscript = '';
+        let currentFinalTranscript = '';
+
+        // Iterate through all results from the beginning of the event.results array
+        // This is crucial to correctly handle updates and corrections from the API
         for (let i = 0; i < event.results.length; ++i) {
-            const transcript_part = event.results[i][0].transcript;
+            const transcript = event.results[i][0].transcript;
             if (event.results[i].isFinal) {
-                final_transcript += transcript_part;
+                currentFinalTranscript += transcript;
             } else {
-                interim_transcript += transcript_part;
+                currentInterimTranscript += transcript;
             }
         }
-        
-        const newFinalText = final_transcript.substring(lastProcessedTranscript.length);
-        if (newFinalText) {
-            translationBuffer += newFinalText;
-            lastProcessedTranscript = final_transcript;
-            queueAndProcess();
+
+        // Determine what new final text has been added since the last update
+        // The fullTranscript should only contain final, confirmed text
+        const newFinalText = currentFinalTranscript.substring(fullTranscript.length);
+
+        if (newFinalText.trim()) {
+            fullTranscript += newFinalText; // Append new final text to the authoritative transcript
+            translationBuffer += newFinalText; // Add to buffer for translation
+            queueAndProcess(false); // Check for word count trigger
         }
 
-        englishText.textContent = final_transcript + interim_transcript;
+        // Display the authoritative final transcript plus the current interim (unconfirmed) speech
+        englishText.textContent = fullTranscript + currentInterimTranscript;
 
+        // Set a new pause timer
         pauseTimer = setTimeout(() => {
-            queueAndProcess(true);
+            queueAndProcess(true); // Force translation on pause
         }, PAUSE_DETECTION_MS);
       };
 
@@ -228,14 +236,14 @@
 
       recognition.onend = () => {
         if (isStopping) {
-            queueAndProcess(true);
+            queueAndProcess(true); // Force translation of any remaining text
             listeningIndicator.classList.add('hidden');
             micBtn.classList.remove('hidden');
             stopBtn.classList.add('hidden');
             setStatus('Stopped listening');
         } else {
             if (recognition) {
-                recognition.start();
+                recognition.start(); // Auto-restart
             }
         }
       };
@@ -251,7 +259,7 @@
       }
       sentence_context = [];
       translationBuffer = '';
-      lastProcessedTranscript = '';
+      fullTranscript = '';
       translationQueue = [];
       englishText.textContent = '';
       germanText.textContent = '';
