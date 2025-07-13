@@ -81,16 +81,22 @@
     const showEnglishCheckbox = document.getElementById('showEnglishCheckbox');
     const speakerBtn = document.getElementById('speakerBtn');
 
+    // --- Config --- 
+    const RATE_LIMIT_MS = 10000; // Minimum time between the end of one translation and the start of the next.
+    const FORCE_TRANSLATE_WORD_COUNT = 30;
+    const PAUSE_DETECTION_MS = 1500; // Time of silence to trigger translation.
+
+    // --- State ---
     let apiKey = localStorage.getItem('geminiApiKey') || '';
     let recognition;
     let sentence_context = [];
-    let queuedText = ''; // Holds finalized text not yet sent for translation
-    let fullTranscript = ''; // Holds the entire displayed transcript
-    let canTranslate = true;
-    const RATE_LIMIT_MS = 10000;
-    const FORCE_TRANSLATE_WORD_COUNT = 30;
+    let transcriptBuffer = ''; // Holds finalized text that hasn't been queued yet.
+    let fullTranscript = ''; // Holds the entire displayed transcript.
+    let translationQueue = [];
+    let isTranslating = false;
     let speakGermanEnabled = false;
     let isStopping = false;
+    let pauseTimer;
 
     function setStatus(msg) {
       statusBar.textContent = msg;
@@ -103,21 +109,14 @@
       speechSynthesis.speak(utter);
     }
 
-    function attemptTranslation(force = false) {
-        const wordCount = queuedText.split(/\s+/).filter(Boolean).length;
-
-        if (!canTranslate && !force && wordCount < FORCE_TRANSLATE_WORD_COUNT) {
-            return; // Rate limited and not forced, so we just queue.
+    // --- Core Translation Logic ---
+    function processTranslationQueue() {
+        if (isTranslating || translationQueue.length === 0) {
+            return;
         }
+        isTranslating = true;
 
-        if (queuedText.trim() === '') {
-            return; // Nothing to translate
-        }
-
-        canTranslate = false; // Lock for rate-limiting
-        const textToTranslate = queuedText.trim();
-        queuedText = ''; // Clear the queue
-
+        const textToTranslate = translationQueue.shift();
         setStatus('Translating...');
         const context = sentence_context.join(' ');
 
@@ -133,7 +132,7 @@
             if (data.error) {
                 console.error('Gemini API Error:', data.error);
                 setStatus(`Error: ${data.error.message}`);
-                queuedText = textToTranslate + ' ' + queuedText; // Re-queue on failure
+                translationQueue.unshift(textToTranslate); // Re-queue on failure
                 return;
             }
             const german = data.candidates[0]?.content?.parts[0]?.text || 'Error';
@@ -142,9 +141,7 @@
             newGermanSpan.classList.add('highlight-new-text');
             germanText.appendChild(newGermanSpan);
 
-            setTimeout(() => {
-                newGermanSpan.classList.remove('highlight-new-text');
-            }, 2000);
+            setTimeout(() => { newGermanSpan.classList.remove('highlight-new-text'); }, 2000);
 
             if (speakGermanEnabled) {
                 speakGerman(german);
@@ -159,16 +156,29 @@
         .catch(error => {
             console.error('Fetch Error:', error);
             setStatus('Error: Could not connect to the translation service.');
-            queuedText = textToTranslate + ' ' + queuedText; // Re-queue on failure
+            translationQueue.unshift(textToTranslate);
         })
         .finally(() => {
             setTimeout(() => {
-                canTranslate = true;
-                attemptTranslation();
+                isTranslating = false;
+                processTranslationQueue(); // Try to process next item in queue after cooldown
             }, RATE_LIMIT_MS);
         });
     }
 
+    function queueAndProcess(force = false) {
+        const wordCount = transcriptBuffer.split(/\s+/).filter(Boolean).length;
+        const shouldTranslate = transcriptBuffer.trim() && (force || wordCount >= FORCE_TRANSLATE_WORD_COUNT);
+
+        if (shouldTranslate) {
+            clearTimeout(pauseTimer);
+            translationQueue.push(transcriptBuffer.trim());
+            transcriptBuffer = '';
+            processTranslationQueue();
+        }
+    }
+
+    // --- Speech Recognition Logic ---
     function startListening() {
       const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
       recognition = new SpeechRecognition();
@@ -184,6 +194,7 @@
       };
 
       recognition.onresult = (event) => {
+        clearTimeout(pauseTimer); // Clear pause timer on new speech
         let interim_transcript = '';
         let final_transcript_part = '';
 
@@ -197,12 +208,17 @@
         }
 
         if (final_transcript_part) {
-            queuedText += final_transcript_part;
+            transcriptBuffer += final_transcript_part;
             fullTranscript += final_transcript_part;
-            attemptTranslation(); // A pause occurred, try to translate.
+            queueAndProcess(); // Check if word count forces translation
         }
 
         englishText.textContent = fullTranscript + interim_transcript;
+
+        // Set a new pause timer
+        pauseTimer = setTimeout(() => {
+            queueAndProcess(true); // Force translation on pause
+        }, PAUSE_DETECTION_MS);
       };
 
       recognition.onerror = (e) => { 
@@ -212,14 +228,14 @@
 
       recognition.onend = () => {
         if (isStopping) {
-            attemptTranslation(true); // Force translation of any remaining text
+            queueAndProcess(true); // Force translation of any remaining text
             listeningIndicator.classList.add('hidden');
             micBtn.classList.remove('hidden');
             stopBtn.classList.add('hidden');
             setStatus('Stopped listening');
         } else {
             if (recognition) {
-                recognition.start();
+                recognition.start(); // Auto-restart
             }
         }
       };
@@ -227,18 +243,20 @@
       recognition.start();
     }
 
+    // --- UI Event Handlers ---
     micBtn.onclick = () => {
       if (!apiKey) {
         apiModal.classList.remove('hidden');
         return;
       }
       sentence_context = [];
-      queuedText = '';
+      transcriptBuffer = '';
       fullTranscript = '';
+      translationQueue = [];
       englishText.textContent = '';
       germanText.textContent = '';
       isStopping = false;
-      canTranslate = true;
+      isTranslating = false;
 
       startListening();
     };
@@ -276,13 +294,13 @@
       setStatus('API key cleared. Please enter a new key.');
     };
 
+    // --- Initial State ---
     if (apiKey) {
       apiModal.classList.add('hidden');
       translationArea.classList.remove('hidden');
       setStatus('Ready to translate');
     }
 
-    // Toggle English text visibility
     showEnglishCheckbox.addEventListener('change', () => {
       if (showEnglishCheckbox.checked) {
         englishTextContainer.classList.remove('hidden');
