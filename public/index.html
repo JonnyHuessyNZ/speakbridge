@@ -166,14 +166,18 @@
         const terminators = /[.?!]/;
         let sentencesFound = false;
 
-        while (transcriptBuffer.match(terminators)) {
-            const sentenceMatch = transcriptBuffer.match(terminators);
-            const sentence = transcriptBuffer.substring(0, sentenceMatch.index + 1).trim();
-            if (sentence) {
-                sentenceQueue.push(sentence);
-                sentencesFound = true;
+        while (true) {
+            const match = transcriptBuffer.match(terminators);
+            if (match) {
+                const sentence = transcriptBuffer.substring(0, match.index + 1).trim();
+                if (sentence) {
+                    sentenceQueue.push(sentence);
+                    sentencesFound = true;
+                }
+                transcriptBuffer = transcriptBuffer.substring(match.index + 1);
+            } else {
+                break;
             }
-            transcriptBuffer = transcriptBuffer.substring(sentenceMatch.index + 1);
         }
 
         if (sentencesFound) {
@@ -186,7 +190,7 @@
       recognition = new SpeechRecognition();
       recognition.continuous = true;
       recognition.lang = 'en-US';
-      recognition.interimResults = false;
+      recognition.interimResults = false; // We only care about final results
 
       recognition.onstart = () => {
         listeningIndicator.classList.remove('hidden');
@@ -202,6 +206,7 @@
             newFinalTranscript += event.results[i][0].transcript;
           }
         }
+
         if (newFinalTranscript) {
             transcriptBuffer += newFinalTranscript;
             englishText.textContent = transcriptBuffer;
@@ -216,8 +221,9 @@
 
       recognition.onend = () => {
         if (isStopping) {
-            if(transcriptBuffer.trim()){
+            if (transcriptBuffer.trim()) {
                 sentenceQueue.push(transcriptBuffer.trim() + '.');
+                transcriptBuffer = '';
                 debounce(translateAndDisplay, 500);
             }
 
