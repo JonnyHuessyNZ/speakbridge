@@ -190,7 +190,7 @@
       recognition = new SpeechRecognition();
       recognition.continuous = true;
       recognition.lang = 'en-US';
-      recognition.interimResults = false; // We only care about final results
+      recognition.interimResults = true; // We only care about final results
 
       recognition.onstart = () => {
         listeningIndicator.classList.remove('hidden');
