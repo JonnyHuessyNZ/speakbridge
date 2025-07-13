@@ -243,7 +243,10 @@
             englishText.scrollTop = englishText.scrollHeight;
         });
 
-        queueAndProcess(false); // Check for word count trigger
+        // Set a timer to trigger translation if there's a pause
+        pauseTimer = setTimeout(() => {
+            queueAndProcess(true); // Force translation on pause
+        }, PAUSE_DETECTION_MS);
       };
 
       recognition.onerror = (e) => { 
@@ -259,6 +262,7 @@
             stopBtn.classList.add('hidden');
             setStatus('Stopped listening');
         } else {
+            queueAndProcess(true); // Force translation of any remaining text on natural end
             if (recognition) {
                 recognition.start(); // Auto-restart
             }
